@@ -4,18 +4,6 @@ CMMNT GRACE-only weekly gravity field for GPS Week 1304
 CMMNT Reported standard deviations are formal (not calibrated)
 ---------------------------------------------------------------
 
-Reference:
-Dahle, Christoph; Flechtner, Frank; Gruber, Christian; König, Daniel;
-König, Rolf; Michalak, Grzegorz; Neumayer, Karl-Hans (2012):
-GFZ GRACE Level-2 Processing Standards Document for Level-2 Product Release 0005,
-(Scientific Technical Report STR12/02 - Data, Revised Edition, January 2013),
-Potsdam, 21 p. DOI: 10.2312/GFZ.b103-1202-25
-
-Download of the STR at:
-http://ebooks.gfz-potsdam.de/pubman/item/escidoc:108022
-Release notes at:
-http://isdc.gfz-potsdam.de/index.php?name=UpDownload&req=getit&lid=574
-
 
 time_period_of_data    20050102 - 20050108   (mid: 20050105)
 generating_institute   GFZ
