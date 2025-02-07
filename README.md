@@ -7,16 +7,27 @@ This project focuses on detecting and visualizing gravitational anomalies using 
 ## Project Structure
 
 ```
-grace-anomaly-detection/
+grace-gravity/
 │
-├── grace_anomaly.py         # Core functions for anomaly detection
-├── global_anomaly_script.py # Script for global anomaly visualization
-├── localized_anomaly_script.py # Script for localized anomaly visualization
-├── spectrum_analysis_script.py # Script for spectral analysis
+├── src/                         # Source code directory
+│   ├── __init__.py
+│   ├── functions.py             # Core functions for anomaly detection
 │
-├── .pre-commit-config.yaml  # Pre-commit configuration
-├── pyproject.toml           # Ruff configuration
-└── requirements-dev.txt     # Development dependencies
+├── data/                        # Folder for GRACE data files
+│   ├── ...            
+│
+├── legacy_notebooks/            # Jupyter notebooks for experimentation
+│   ├── main.ipynb               
+│   ├── new_approach.ipynb
+│
+├── coefficient_analysis.py  # Script for coefficient spectrum analysis
+├── global_anomaly.py        # Script for global anomaly visualization
+├── local_anomaly.py         # Script for localized anomaly visualization
+├── .pre-commit-config.yaml      # Pre-commit configuration
+├── pyproject.toml               # Ruff configuration
+├── requirements-dev.txt         # Development dependencies
+├── requirements.txt             # Production dependencies
+└── README.md                    # Project documentation
 ```
 
 ## Dependencies
