@@ -1,234 +1,20 @@
-import glob
 import os
-import re
 from datetime import datetime, timedelta
-from math import atan2, cos, radians, sin, sqrt
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import matplotlib.pyplot as plt
 import numpy as np
-import pyshtools as pysh
 from scipy.interpolate import griddata
 
-
-def haversine_distance(lat1, lon1, lat2, lon2):
-    """
-    Haversine distance function to compute geodesic distances in kilometers
-    """
-    r = 6371.0
-    lat1_rad, lon1_rad = radians(lat1), radians(lon1)
-    lat2_rad, lon2_rad = radians(lat2), radians(lon2)
-    dlat = lat2_rad - lat1_rad
-    dlon = lon2_rad - lon1_rad
-    a = sin(dlat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon / 2) ** 2
-    c = 2 * atan2(sqrt(a), sqrt(1 - a))
-    return r * c
-
-
-def load_sh_grav_coeffs(gfc_file, format="icgem"):
-    """
-    Load spherical harmonic coefficients from a GRACE GFC file.
-
-    Args:
-        gfc_file (str): Path to the GFC file
-        format (str, optional): File format. Defaults to "icgem"
-
-    Returns:
-        pysh.SHGravCoeffs: Spherical harmonic coefficients
-    """
-    return pysh.SHGravCoeffs.from_file(gfc_file, format=format)
-
-
-def taper_coeffs(coeffs, min_degree, max_degree, taper_width=2):
-    """
-    Apply a cosine taper to the spherical harmonic coefficients.
-
-    Args:
-        coeffs (pysh.SHGravCoeffs): Spherical harmonic coefficient object
-        min_degree (int): Minimum degree of the band
-        max_degree (int): Maximum degree of the band
-        taper_width (int, optional): Width over which to taper. Defaults to 2
-
-    Returns:
-        pysh.SHGravCoeffs: Tapered spherical harmonic coefficients
-    """
-    # Make a copy to avoid modifying the original
-    tapered_coeffs = coeffs.copy()
-
-    # Get maximum degree
-    lmax = coeffs.lmax
-
-    # Create degree weights array
-    degrees = np.arange(lmax + 1)
-    weights = np.ones(lmax + 1)
-
-    # Calculate taper weights
-    for l_degrees in degrees:
-        if l_degrees < min_degree:
-            if l_degrees < min_degree - taper_width:
-                weights[l_degrees] = 0.0
-            else:
-                weights[l_degrees] = 0.5 * (1 + np.cos(np.pi * (min_degree - l_degrees) / taper_width))
-        elif l_degrees > max_degree:
-            if l_degrees > max_degree + taper_width:
-                weights[l_degrees] = 0.0
-            else:
-                weights[l_degrees] = 0.5 * (1 + np.cos(np.pi * (l_degrees - max_degree) / taper_width))
-        else:
-            weights[l_degrees] = 1.0
-
-    # Apply taper weights to coefficients
-    for l_degrees in range(lmax + 1):
-        tapered_coeffs.coeffs[:, l_degrees, :] *= weights[l_degrees]
-
-    return tapered_coeffs
-
-
-def compute_gravity_anomaly(coeffs, max_degree=30, heatmap=False):
-    """
-    Compute gravity anomaly from spherical harmonic coefficients.
-
-    Args:
-        coeffs (pysh.SHGravCoeffs): Spherical harmonic coefficients
-        exclude_degrees (int, optional): Number of low degrees to exclude. Defaults to 0.
-
-    Returns:
-        numpy.ndarray: Gravity anomaly grid
-    """
-    # Get parameters from coeffs object
-    gm = 3.9860044150e14  # Gravitational constant * mass [m^3/s^2]
-    r0 = 6.3781363000e06  # Reference radius [m]
-
-    if heatmap:
-        modified_coeffs = coeffs.copy()
-        temp_coeffs = modified_coeffs.coeffs.copy()
-        temp_coeffs[:, 5:max_degree, :] = 0
-        modified_coeffs.coeffs = temp_coeffs
-        coeffs = modified_coeffs
-
-    coeff_array = coeffs.to_array(normalization="4pi", csphase=-1)
-
-    # Calculate gravity anomaly
-    v_xx, v_yy, v_zz, v_xy, v_xz, v_yz = pysh.gravmag.MakeGravGradGridDH(
-        coeff_array, gm, r0, lmax=coeffs.lmax, sampling=2, extend=False
-    )
-
-    return v_xx * 1e9, v_xz * 1e9
-
-
-def parse_date_from_filename(filename):
-    """
-    Extract date information from GFC filename.
-
-    Args:
-        filename (str): Path to the GFC file
-
-    Returns:
-        datetime or None: Extracted date object
-    """
-    # Try different date patterns found in common GFC files
-
-    # Pattern for ITSG files (e.g., ITSG-Grace2014_2004-12-28.gfc)
-    itsg_match = re.search(r"(\d{4})-(\d{2})-(\d{2})", filename)
-    if itsg_match:
-        year, month, day = map(int, itsg_match.groups())
-        return datetime(year, month, day)
-
-    # Pattern for CSR files with day of year (e.g., CSR_Release-06_2004336)
-    csr_match = re.search(r"(\d{4})(\d{3})", filename)
-    if csr_match:
-        year, doy = map(int, csr_match.groups())
-        return datetime(year, 1, 1) + timedelta(days=doy - 1)
-
-    # Pattern for monthly solutions (e.g., GFZ_RL06_2004_09)
-    monthly_match = re.search(r"_(\d{4})[-_](\d{2})", filename)
-    if monthly_match:
-        year, month = map(int, monthly_match.groups())
-        return datetime(year, month, 15)  # Mid-month convention
-
-    return None
-
-
-def find_grace_files_for_period(data_dir, start_date, end_date=None, days_after=30):
-    """
-    Find GRACE files within a specified time period.
-
-    Args:
-        data_dir (str): Directory containing GFC files
-        start_date (datetime): Start date
-        end_date (datetime, optional): End date. If None, calculated from days_after.
-        days_after (int, optional): Days after start_date. Defaults to 30.
-
-    Returns:
-        list: List of GFC files sorted by date
-    """
-    if end_date is None:
-        end_date = start_date + timedelta(days=days_after)
-
-    all_files = glob.glob(os.path.join(data_dir, "*.gfc"))
-    period_files = []
-
-    for file in all_files:
-        file_date = parse_date_from_filename(file)
-        if file_date and start_date <= file_date <= end_date:
-            period_files.append((file, file_date))
-
-    if not period_files:
-        raise FileNotFoundError(f"No GRACE files found in the date range {start_date} to {end_date}")
-
-    # Sort by date
-    period_files.sort(key=lambda x: x[1])
-    return [f[0] for f in period_files]
-
-
-def filter_earthquake_signal(
-    gfc_file,
-    epicenter_lat,
-    epicenter_lon,
-    min_degree=10,
-    max_degree=60,
-    taper_width=3,
-    radius=2,
-):
-    """
-    Filter earthquake signal from GRACE data using spectral band filtering.
-
-    Args:
-        gfc_file (str): Path to the GFC file
-        epicenter_lat (float): Latitude of earthquake epicenter
-        epicenter_lon (float): Longitude of earthquake epicenter
-        min_degree (int, optional): Minimum spherical harmonic degree. Defaults to 10.
-        max_degree (int, optional): Maximum spherical harmonic degree. Defaults to 60.
-        taper_width (int, optional): Taper width. Defaults to 3.
-
-    Returns:
-        tuple: (float, float) Mean V_xx and V_xz values within the specified radius
-    """
-
-    if epicenter_lon < 0:
-        epicenter_lon += 360
-
-    coeffs = load_sh_grav_coeffs(gfc_file)
-    filtered_coeffs = taper_coeffs(coeffs, min_degree, max_degree, taper_width)
-    v_xx, v_xz = compute_gravity_anomaly(filtered_coeffs, heatmap=False)
-
-    nlat, nlon = v_xx.shape
-    lats = np.linspace(90, -90, nlat)
-    lons = np.linspace(0, 360, nlon, endpoint=False)
-    lat_grid, lon_grid = np.meshgrid(lats, lons, indexing="ij")
-
-    distance_grid = np.vectorize(haversine_distance)(epicenter_lat, epicenter_lon, lat_grid, lon_grid)
-    distance_threshold = radius * 111  # km
-    mask = distance_grid <= distance_threshold
-
-    mean_v_xx = np.mean(v_xx[mask])
-    mean_v_xz = np.mean(v_xz[mask])
-
-    if np.isnan(mean_v_xx) or np.isnan(mean_v_xz):
-        raise ValueError("No valid grid points within the specified radius")
-
-    return mean_v_xx, mean_v_xz
+from src.functions import (
+    compute_gravity_gradient_tensor,
+    compute_long_term_average,
+    filter_earthquake_signal,
+    find_grace_files_for_period,
+    load_sh_grav_coeffs,
+    parse_date_from_filename,
+)
 
 
 def plot_earthquake_anomaly(
@@ -260,7 +46,7 @@ def plot_earthquake_anomaly(
         epicenter_lon += 360
     # Load and compute gravity gradients
     coeffs = load_sh_grav_coeffs(gfc_file)
-    v_xx, v_xz = compute_gravity_anomaly(coeffs, heatmap=True)
+    v_xx, v_xz = compute_gravity_gradient_tensor(coeffs, heatmap=True)
 
     # Set up the grid
     nlat, nlon = v_xx.shape
@@ -399,31 +185,6 @@ def plot_earthquake_anomaly(
         plt.show()
 
     return fig
-
-
-def compute_long_term_average(
-    data_dir,
-    baseline_start_date,
-    baseline_end_date,
-    epicenter_lat,
-    epicenter_lon,
-    min_degree,
-    max_degree,
-    taper_width=3,
-):
-    grace_files = find_grace_files_for_period(data_dir, baseline_start_date, baseline_end_date)
-    if not grace_files:
-        raise ValueError(f"No GRACE files found between {baseline_start_date} and {baseline_end_date}")
-
-    v_xx_list, v_xz_list = [], []
-    for gfc_file in grace_files:
-        mean_v_xx, mean_v_xz = filter_earthquake_signal(
-            gfc_file, epicenter_lat, epicenter_lon, min_degree, max_degree, taper_width
-        )
-        v_xx_list.append(mean_v_xx)
-        v_xz_list.append(mean_v_xz)
-
-    return np.mean(v_xx_list), np.mean(v_xz_list)
 
 
 def generate_time_series_plots(
@@ -565,7 +326,7 @@ def generate_time_series_plots(
 
 if __name__ == "__main__":
     # Configure for the 2010 Chilean earthquake
-    DATA_DIR = "time_series/ddk0_2010_daily"
+    DATA_DIR = "/home/kilups/Downloads/ITSG_ITSG-Grace2018_monthly_120"
     EARTHQUAKE_DATE = "2010-02-27"  # Chilean earthquake
     EPICENTER_LAT = -35.91  # Latitude of the Chilean earthquake epicenter
     EPICENTER_LON = -72.73  # Longitude of the Chilean earthquake epicenter

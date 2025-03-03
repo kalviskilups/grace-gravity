@@ -4,3 +4,4 @@ tqdm
 numpy
 cartopy
 matplotlib
+pyshtools
