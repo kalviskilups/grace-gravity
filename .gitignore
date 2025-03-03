@@ -1,3 +1,7 @@
 src/__pycache__/
 .ruff_cache
 *.png
+*.pyc
+*.gfc
+timeline.md
+commands.txt
