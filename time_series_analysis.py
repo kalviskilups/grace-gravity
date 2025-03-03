@@ -1,5 +1,13 @@
+"""
+Visualization tools for earthquake gravity anomalies from GRACE data.
+
+This module provides functions for creating map-based and time series visualizations
+of gravity gradient anomalies associated with earthquakes.
+"""
+
 import os
 from datetime import datetime, timedelta
+from typing import Optional, Union
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -18,32 +26,35 @@ from src.functions import (
 
 
 def plot_earthquake_anomaly(
-    gfc_file,
-    epicenter_lat,
-    epicenter_lon,
-    min_degree=10,
-    max_degree=60,
-    title=None,
-    region_size=15,
-    output_file=None,
-):
+    gfc_file: str,
+    epicenter_lat: float,
+    epicenter_lon: float,
+    min_degree: int = 10,
+    max_degree: int = 60,
+    title: Optional[str] = None,
+    region_size: float = 15.0,
+    output_file: Optional[str] = None,
+) -> plt.Figure:
     """
     Plot earthquake gravity gradient anomalies.
 
     Args:
-        gfc_file (str): Path to the GFC file
-        epicenter_lat (float): Latitude of epicenter
-        epicenter_lon (float): Longitude of epicenter
-        min_degree (int, optional): Minimum spherical harmonic degree. Defaults to 10.
-        max_degree (int, optional): Maximum spherical harmonic degree. Defaults to 60.
-        taper_width (int, optional): Taper width. Defaults to 3.
-        title (str, optional): Plot title
-        region_size (float, optional): Size of region around epicenter in degrees
-        output_file (str, optional): Path to save figure
-    """
+        gfc_file: Path to the GFC file
+        epicenter_lat: Latitude of epicenter
+        epicenter_lon: Longitude of epicenter
+        min_degree: Minimum spherical harmonic degree
+        max_degree: Maximum spherical harmonic degree
+        title: Plot title (if None, will be generated from file date)
+        region_size: Size of region around epicenter in degrees
+        output_file: Path to save figure (if None, will display)
 
+    Returns:
+        Matplotlib figure object
+    """
+    # Normalize longitude to 0-360 range
     if epicenter_lon < 0:
         epicenter_lon += 360
+
     # Load and compute gravity gradients
     coeffs = load_sh_grav_coeffs(gfc_file)
     v_xx, v_xz = compute_gravity_gradient_tensor(coeffs, heatmap=True)
@@ -188,33 +199,65 @@ def plot_earthquake_anomaly(
 
 
 def generate_time_series_plots(
-    data_dir,
-    earthquake_date,
-    epicenter_lat,
-    epicenter_lon,
-    min_degree=10,
-    max_degree=60,
-    taper_width=3,
-    days_before=700,
-    days_after=365,
-    region_radius=2,
-    output_file="time_series.png",
-    iqr_k=2.5,
-):
+    data_dir: str,
+    earthquake_date: Union[str, datetime],
+    epicenter_lat: float,
+    epicenter_lon: float,
+    min_degree: int = 10,
+    max_degree: int = 60,
+    taper_width: int = 3,
+    days_before: int = 700,
+    days_after: int = 365,
+    region_radius: float = 2.0,
+    output_file: str = "time_series.png",
+    iqr_k: float = 2.5,
+    baseline_start: Optional[datetime] = None,
+    baseline_end: Optional[datetime] = None,
+) -> None:
+    """
+    Generate time series plots of gravity gradient anomalies around an earthquake.
+
+    Args:
+        data_dir: Directory containing GFC files
+        earthquake_date: Date of the earthquake (str or datetime)
+        epicenter_lat: Latitude of epicenter
+        epicenter_lon: Longitude of epicenter
+        min_degree: Minimum spherical harmonic degree
+        max_degree: Maximum spherical harmonic degree
+        taper_width: Taper width for filtering
+        days_before: Days before earthquake to analyze
+        days_after: Days after earthquake to analyze
+        region_radius: Radius around epicenter in degrees
+        output_file: Path to save figure
+        iqr_k: Multiplier for IQR-based anomaly detection
+        baseline_start: Start date for baseline period (defaults to 3 years before earthquake)
+        baseline_end: End date for baseline period (defaults to 1 year before earthquake)
+    """
+    # Convert string date to datetime if needed
     if isinstance(earthquake_date, str):
         earthquake_date = datetime.strptime(earthquake_date, "%Y-%m-%d")
 
+    # Define time range
     start_date = earthquake_date - timedelta(days=days_before)
     end_date = earthquake_date + timedelta(days=days_after)
-    grace_files = find_grace_files_for_period(data_dir, start_date, end_date)
+
+    # Set default baseline period if not provided
+    if baseline_start is None:
+        baseline_start = earthquake_date - timedelta(days=365)  # ~1 years before
+    if baseline_end is None:
+        baseline_end = earthquake_date - timedelta(days=365)  # 1 year before
+
+    try:
+        grace_files = find_grace_files_for_period(data_dir, start_date, end_date)
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        return
 
     if not grace_files:
         print(f"No GRACE files found for {start_date} to {end_date}")
         return
 
     dates, v_xx_values, v_xz_values = [], [], []
-    baseline_start = datetime(2008, 2, 1)
-    baseline_end = datetime(2011, 3, 1)
 
     try:
         v_xx_avg, v_xz_avg = compute_long_term_average(
@@ -227,11 +270,12 @@ def generate_time_series_plots(
             max_degree,
             taper_width,
         )
-        print("Long-term average gradients computed successfully.")
+        print(f"Long-term average gradients computed successfully: V_xx={v_xx_avg:.2f}, V_xz={v_xz_avg:.2f}")
     except ValueError as e:
         print(f"Baseline error: {e}")
         return
 
+    # Process each file
     for gfc_file in grace_files:
         file_date = parse_date_from_filename(gfc_file)
         if not file_date:
@@ -284,11 +328,11 @@ def generate_time_series_plots(
     ax1.axhline(y=lower_bound_xx, color="gray", linestyle="--", label="Lower IQR")
     ax1.axhline(y=upper_bound_xx, color="gray", linestyle="--", label="Upper IQR")
     ax1.set_ylabel("V_xx (Eötvös)")
-    ax1.set_title("V_xx Time Series (±{}° around epicenter)".format(region_radius))
+    ax1.set_title(f"V_xx Time Series (±{region_radius}° around epicenter)")
     ax1.legend()
     ax1.grid(True)
 
-    # Process and plot V_xz
+    # Process and plot
     v_xz_array = np.array(v_xz_values)
     q1_xz, q3_xz = np.percentile(v_xz_array, [25, 75])
     iqr_xz = q3_xz - q1_xz
