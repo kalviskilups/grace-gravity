@@ -1,25 +1,27 @@
 """
-Core functionality for GRACE gravity field analysis and visualization.
+Core functionality for GRACE gravity field analysis.
 
-This module provides functions for loading, processing, and analyzing
-gravitational data from the GRACE satellite mission.
+This module provides functions for calculating various gravity field metrics,
+including anomalies, gradients, and comparative measures from GRACE data.
 """
 
-import glob
-import os
-import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from math import atan2, cos, radians, sin, sqrt
-from typing import List, Optional, Tuple
+from typing import Tuple
 
 import numpy as np
 import pyshtools as pysh
 from numpy.typing import NDArray
 
+from src.io import find_grace_files_for_period, load_sh_grav_coeffs
+
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """
     Calculate the great-circle distance between two points using the Haversine formula.
+
+    The Haversine formula determines the shortest distance between two points on a
+    sphere given their longitudes and latitudes.
 
     Args:
         lat1: Latitude of the first point in degrees
@@ -29,6 +31,10 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
 
     Returns:
         Distance between the points in kilometers
+
+    Examples:
+        >>> haversine_distance(52.5200, 13.4050, 48.8566, 2.3522)
+        878.5699308283413  # Distance between Berlin and Paris
     """
     # Earth radius in kilometers
     r = 6371.0
@@ -48,48 +54,34 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     return r * c
 
 
-def load_sh_grav_coeffs(gfc_file: str, format: str = "icgem") -> pysh.SHGravCoeffs:
-    """
-    Load spherical harmonic coefficients from a GRACE GFC file.
-
-    Args:
-        gfc_file: Path to the GFC file
-        format: File format, defaults to "icgem"
-
-    Returns:
-        Spherical harmonic coefficients object
-
-    Raises:
-        FileNotFoundError: If the file doesn't exist
-        ValueError: If the file format is invalid
-    """
-    if not os.path.exists(gfc_file):
-        raise FileNotFoundError(f"GFC file not found: {gfc_file}")
-
-    try:
-        return pysh.SHGravCoeffs.from_file(gfc_file, format=format)
-    except Exception as e:
-        raise ValueError(f"Failed to load coefficients from {gfc_file}: {str(e)}")
-
-
 def compute_gravity_anomaly(coeffs: pysh.SHGravCoeffs, exclude_degrees: int = 5) -> NDArray:
     """
     Compute gravity anomaly while excluding low-degree coefficients.
+
+    This function calculates gravity anomalies from spherical harmonic coefficients,
+    zeroing out the low-degree components which typically represent the Earth's
+    overall shape rather than local anomalies.
 
     Args:
         coeffs: Input spherical harmonic coefficients
         exclude_degrees: Number of low degrees to zero out, defaults to 5
 
     Returns:
-        Gravity anomaly grid as a numpy array
+        Gravity anomaly grid as a numpy array (in m/s²)
+
+    Examples:
+        >>> coeffs = load_sh_grav_coeffs("GRACE_data.gfc")
+        >>> anomalies = compute_gravity_anomaly(coeffs, exclude_degrees=5)
+        >>> anomalies.shape
+        (180, 360)  # Grid covering the Earth
     """
     # Physical constants
-    gm = 3.9860044150e14  # Gravitational constant * mass [m^3/s^2]
-    r0 = 6.3781363000e06  # Reference radius [m]
+    gm = coeffs.gm  # Gravitational constant * mass [m^3/s^2]
+    r0 = coeffs.r0  # Reference radius [m]
 
     # Create a copy of coefficients and zero out low degrees
     modified_coeffs = coeffs.coeffs.copy()
-    modified_coeffs[:, 0:exclude_degrees, :] = 0
+    modified_coeffs[:, 5:exclude_degrees, :] = 0
 
     # Calculate gravity components
     rad, theta, phi, total, pot = pysh.gravmag.MakeGravGridDH(
@@ -109,6 +101,9 @@ def compute_gravity_gradient_tensor(
     """
     Compute gravity gradient tensor components from spherical harmonic coefficients.
 
+    This function calculates the gravity gradient tensor components V_xx and V_xz,
+    which represent spatial derivatives of the gravitational potential.
+
     Args:
         coeffs: Spherical harmonic coefficients
         max_degree: Maximum degree to include in calculations
@@ -116,6 +111,12 @@ def compute_gravity_gradient_tensor(
 
     Returns:
         Tuple containing V_xx and V_xz gradient components in Eötvös units
+
+    Examples:
+        >>> coeffs = load_sh_grav_coeffs("GRACE_data.gfc")
+        >>> v_xx, v_xz = compute_gravity_gradient_tensor(coeffs, max_degree=60)
+        >>> v_xx.shape, v_xz.shape
+        ((180, 360), (180, 360))  # Global grid of tensor components
     """
     # Get parameters from coeffs object
     gm = coeffs.gm
@@ -141,46 +142,12 @@ def compute_gravity_gradient_tensor(
     return v_xx * 1e9, v_xz * 1e9
 
 
-def parse_date_from_filename(filename: str) -> Optional[datetime]:
-    """
-    Extract date information from GFC filename.
-
-    Args:
-        filename: Path to the GFC file
-
-    Returns:
-        Extracted date object or None if no date pattern is found
-    """
-    # Pattern for ITSG files with full date (e.g., ITSG-Grace2014_2004-12-28.gfc)
-    itsg_match = re.search(r"(\d{4})-(\d{2})-(\d{2})", filename)
-    if itsg_match:
-        year, month, day = map(int, itsg_match.groups())
-        return datetime(year, month, day)
-
-    # Pattern for CSR files with day of year (e.g., CSR_Release-06_2004336)
-    csr_match = re.search(r"(\d{4})(\d{3})", filename)
-    if csr_match:
-        year, doy = map(int, csr_match.groups())
-        return datetime(year, 1, 1) + timedelta(days=doy - 1)
-
-    # Pattern for monthly solutions (e.g., GFZ_RL06_2004_09)
-    monthly_match = re.search(r"_(\d{4})[-_](\d{2})", filename)
-    if monthly_match:
-        year, month = map(int, monthly_match.groups())
-        return datetime(year, month, 15)  # Mid-month convention
-
-    # Pattern for ITSG monthly data (e.g., ITSG-Grace2018_n120_2015-12)
-    itsg_monthly_match = re.search(r"(\d{4})-(\d{2})$", filename)
-    if itsg_monthly_match:
-        year, month = map(int, itsg_monthly_match.groups())
-        return datetime(year, month, 15)  # Mid-month convention
-
-    return None
-
-
-def compute_anomaly_difference(coeffs1: pysh.SHGravCoeffs, coeffs2: pysh.SHGravCoeffs) -> NDArray:
+def compute_anomaly_difference(coeffs1: pysh.SHGravCoeffs, coeffs2: pysh.SHGravCoeffs, exclude_degrees: int) -> NDArray:
     """
     Compute the absolute difference between two gravity anomalies.
+
+    This function calculates the difference between two sets of gravity anomalies,
+    useful for comparing changes over time or between different models.
 
     Args:
         coeffs1: First set of coefficients
@@ -188,58 +155,73 @@ def compute_anomaly_difference(coeffs1: pysh.SHGravCoeffs, coeffs2: pysh.SHGravC
 
     Returns:
         Scaled anomaly difference grid (in microGal units)
+
+    Examples:
+        >>> coeffs1 = load_sh_grav_coeffs("GRACE_2010_01.gfc")
+        >>> coeffs2 = load_sh_grav_coeffs("GRACE_2010_03.gfc")
+        >>> diff = compute_anomaly_difference(coeffs1, coeffs2)
+        >>> np.mean(diff)  # Average difference in microGal
     """
-    anomaly1 = compute_gravity_anomaly(coeffs1)
-    anomaly2 = compute_gravity_anomaly(coeffs2)
+    exclude_degrees = coeffs1.lmax if exclude_degrees > coeffs1.lmax else exclude_degrees
+    anomaly1 = compute_gravity_anomaly(coeffs1, exclude_degrees)
+    anomaly2 = compute_gravity_anomaly(coeffs2, exclude_degrees)
 
     # Scale to microGal
     return abs(anomaly2 - anomaly1) * 1e8
 
 
-def find_grace_files_for_period(
-    data_dir: str,
-    start_date: datetime,
-    end_date: Optional[datetime] = None,
-    days_after: int = 30,
-) -> List[str]:
+def taper_coeffs(
+    coeffs: pysh.SHGravCoeffs, min_degree: int, max_degree: int, taper_width: int = 2
+) -> pysh.SHGravCoeffs:
     """
-    Find GRACE files within a specified time period.
+    Apply a cosine taper to the spherical harmonic coefficients.
+
+    This function applies a cosine taper to spherical harmonic coefficients,
+    which helps reduce ringing artifacts in gravity field reconstructions.
 
     Args:
-        data_dir: Directory containing GFC files
-        start_date: Start date
-        end_date: End date (if None, calculated from days_after)
-        days_after: Days after start_date (used if end_date is None)
+        coeffs: Spherical harmonic coefficient object
+        min_degree: Minimum degree of the band
+        max_degree: Maximum degree of the band
+        taper_width: Width over which to taper
 
     Returns:
-        List of GFC files sorted by date
+        Tapered spherical harmonic coefficients
 
-    Raises:
-        FileNotFoundError: If no files found in the date range
+    Examples:
+        >>> coeffs = load_sh_grav_coeffs("GRACE_data.gfc")
+        >>> tapered = taper_coeffs(coeffs, min_degree=10, max_degree=60, taper_width=3)
     """
-    if not os.path.isdir(data_dir):
-        raise FileNotFoundError(f"Data directory not found: {data_dir}")
+    # Make a copy to avoid modifying the original
+    tapered_coeffs = coeffs.copy()
 
-    if end_date is None:
-        end_date = start_date + timedelta(days=days_after)
+    # Get maximum degree
+    lmax = coeffs.lmax
 
-    all_files = glob.glob(os.path.join(data_dir, "*.gfc"))
-    if not all_files:
-        raise FileNotFoundError(f"No GFC files found in directory: {data_dir}")
+    # Create degree weights array
+    degrees = np.arange(lmax + 1)
+    weights = np.ones(lmax + 1)
 
-    period_files = []
+    # Calculate taper weights
+    for l_degrees in degrees:
+        if l_degrees < min_degree:
+            if l_degrees < min_degree - taper_width:
+                weights[l_degrees] = 0.0
+            else:
+                weights[l_degrees] = 0.5 * (1 + np.cos(np.pi * (min_degree - l_degrees) / taper_width))
+        elif l_degrees > max_degree:
+            if l_degrees > max_degree + taper_width:
+                weights[l_degrees] = 0.0
+            else:
+                weights[l_degrees] = 0.5 * (1 + np.cos(np.pi * (l_degrees - max_degree) / taper_width))
+        else:
+            weights[l_degrees] = 1.0
 
-    for file in all_files:
-        file_date = parse_date_from_filename(file)
-        if file_date and start_date <= file_date <= end_date:
-            period_files.append((file, file_date))
+    # Apply taper weights to coefficients
+    for l_degrees in range(lmax + 1):
+        tapered_coeffs.coeffs[:, l_degrees, :] *= weights[l_degrees]
 
-    if not period_files:
-        raise FileNotFoundError(f"No GRACE files found in the date range {start_date} to {end_date}")
-
-    # Sort by date
-    period_files.sort(key=lambda x: x[1])
-    return [f[0] for f in period_files]
+    return tapered_coeffs
 
 
 def filter_earthquake_signal(
@@ -253,6 +235,9 @@ def filter_earthquake_signal(
 ) -> Tuple[float, float]:
     """
     Filter earthquake signal from GRACE data using spectral band filtering.
+
+    This function focuses on extracting earthquake-related gravity signals
+    by applying band filtering and analyzing a region around the epicenter.
 
     Args:
         gfc_file: Path to the GFC file
@@ -268,6 +253,16 @@ def filter_earthquake_signal(
 
     Raises:
         ValueError: If no valid grid points within the specified radius
+
+    Examples:
+        >>> # For the 2010 Chile earthquake
+        >>> v_xx, v_xz = filter_earthquake_signal(
+        ...     "GRACE_2010_03.gfc",
+        ...     -35.846, -72.719,
+        ...     min_degree=10, max_degree=60
+        ... )
+        >>> v_xx, v_xz
+        (-15.23, 8.45)  # Example gravity gradient values
     """
     # Normalize longitude to 0-360 range
     if epicenter_lon < 0:
@@ -304,67 +299,6 @@ def filter_earthquake_signal(
     return mean_v_xx, mean_v_xz
 
 
-def taper_coeffs(
-    coeffs: pysh.SHGravCoeffs, min_degree: int, max_degree: int, taper_width: int = 2
-) -> pysh.SHGravCoeffs:
-    """
-    Apply a cosine taper to the spherical harmonic coefficients.
-
-    Args:
-        coeffs: Spherical harmonic coefficient object
-        min_degree: Minimum degree of the band
-        max_degree: Maximum degree of the band
-        taper_width: Width over which to taper
-
-    Returns:
-        Tapered spherical harmonic coefficients
-    """
-    # Make a copy to avoid modifying the original
-    tapered_coeffs = coeffs.copy()
-
-    # Get maximum degree
-    lmax = coeffs.lmax
-
-    # Create degree weights array
-    degrees = np.arange(lmax + 1)
-    weights = np.ones(lmax + 1)
-
-    # Calculate taper weights
-    for l_degrees in degrees:
-        if l_degrees < min_degree:
-            if l_degrees < min_degree - taper_width:
-                weights[l_degrees] = 0.0
-            else:
-                weights[l_degrees] = 0.5 * (1 + np.cos(np.pi * (min_degree - l_degrees) / taper_width))
-        elif l_degrees > max_degree:
-            if l_degrees > max_degree + taper_width:
-                weights[l_degrees] = 0.0
-            else:
-                weights[l_degrees] = 0.5 * (1 + np.cos(np.pi * (l_degrees - max_degree) / taper_width))
-        else:
-            weights[l_degrees] = 1.0
-
-    # Apply taper weights to coefficients
-    for l_degrees in range(lmax + 1):
-        tapered_coeffs.coeffs[:, l_degrees, :] *= weights[l_degrees]
-
-    return tapered_coeffs
-
-
-def plot_coefficient_spectrum(gfc_file: str, unit: str = "per_l", xscale: str = "lin", yscale: str = "log") -> None:
-    """
-    Plot the spectral characteristics of spherical harmonic coefficients.
-
-    Args:
-        gfc_file: Path to the GRACE GFC file
-        unit: Spectral representation unit
-        xscale: X-axis scaling
-        yscale: Y-axis scaling
-    """
-    coeffs = pysh.SHGravCoeffs.from_file(gfc_file, format="icgem")
-    coeffs.plot_spectrum(unit=unit, xscale=xscale, yscale=yscale, legend=True)
-
-
 def compute_long_term_average(
     data_dir: str,
     baseline_start_date: datetime,
@@ -377,6 +311,9 @@ def compute_long_term_average(
 ) -> Tuple[float, float]:
     """
     Compute long-term average gravity gradients for baseline comparison.
+
+    This function calculates the average gravity gradients over a baseline period,
+    which can be used to detect anomalies when comparing with post-event measurements.
 
     Args:
         data_dir: Directory containing GFC files
@@ -393,6 +330,15 @@ def compute_long_term_average(
 
     Raises:
         ValueError: If no GRACE files found in the baseline period
+
+    Examples:
+        >>> # Calculate baseline for Chile earthquake (2010)
+        >>> v_xx_avg, v_xz_avg = compute_long_term_average(
+        ...     "data/",
+        ...     datetime(2008, 1, 1), datetime(2009, 12, 31),
+        ...     -35.846, -72.719,
+        ...     min_degree=10, max_degree=60
+        ... )
     """
     grace_files = find_grace_files_for_period(data_dir, baseline_start_date, baseline_end_date)
     if not grace_files:

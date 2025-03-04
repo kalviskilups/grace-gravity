@@ -1,11 +1,10 @@
 """
-Visualization tools for earthquake gravity anomalies from GRACE data.
+Visualization functions for GRACE gravity field data.
 
-This module provides functions for creating map-based and time series visualizations
-of gravity gradient anomalies associated with earthquakes.
+This module provides functions for creating visualizations of gravitational
+anomalies, gravity gradient fields, and time series analysis.
 """
 
-import os
 from datetime import datetime, timedelta
 from typing import Optional, Union
 
@@ -19,10 +18,52 @@ from src.functions import (
     compute_gravity_gradient_tensor,
     compute_long_term_average,
     filter_earthquake_signal,
+    taper_coeffs,
+)
+from src.io import (
     find_grace_files_for_period,
     load_sh_grav_coeffs,
     parse_date_from_filename,
 )
+from src.processing import detect_anomalies, normalize_longitude
+
+
+def plot_coefficient_spectrum(
+    gfc_file: str,
+    unit: str = "per_l",
+    xscale: str = "lin",
+    yscale: str = "log",
+    output_file: Optional[str] = None,
+) -> plt.Figure:
+    """
+    Plot the spectral characteristics of spherical harmonic coefficients.
+
+    Args:
+        gfc_file: Path to the GRACE GFC file
+        unit: Spectral representation unit
+        xscale: X-axis scaling ("lin" or "log")
+        yscale: Y-axis scaling ("lin" or "log")
+        output_file: Path to save figure (if None, will display)
+
+    Returns:
+        Matplotlib figure object
+
+    Examples:
+        >>> fig = plot_coefficient_spectrum(
+        ...     "GRACE_2010_03.gfc",
+        ...     unit="per_l",
+        ...     xscale="log",
+        ...     output_file="spectrum.png"
+        ... )
+    """
+    coeffs = load_sh_grav_coeffs(gfc_file, format="icgem")
+    fig = coeffs.plot_spectrum(unit=unit, xscale=xscale, yscale=yscale, legend=True)
+
+    if output_file:
+        plt.savefig(output_file, dpi=300, bbox_inches="tight")
+        plt.close()
+
+    return fig
 
 
 def plot_earthquake_anomaly(
@@ -38,6 +79,9 @@ def plot_earthquake_anomaly(
     """
     Plot earthquake gravity gradient anomalies.
 
+    Creates a visualization of gravity gradient tensor components
+    focused on the region around an earthquake epicenter.
+
     Args:
         gfc_file: Path to the GFC file
         epicenter_lat: Latitude of epicenter
@@ -50,13 +94,27 @@ def plot_earthquake_anomaly(
 
     Returns:
         Matplotlib figure object
+
+    Examples:
+        >>> # Visualize the 2010 Chile earthquake region
+        >>> fig = plot_earthquake_anomaly(
+        ...     "GRACE_2010_03.gfc",
+        ...     -35.846, -72.719,
+        ...     min_degree=10, max_degree=60,
+        ...     region_size=20.0,
+        ...     output_file="chile_earthquake.png"
+        ... )
     """
     # Normalize longitude to 0-360 range
-    if epicenter_lon < 0:
-        epicenter_lon += 360
+    epicenter_lon = normalize_longitude(epicenter_lon)
 
     # Load and compute gravity gradients
     coeffs = load_sh_grav_coeffs(gfc_file)
+
+    # Apply degree filtering if specified
+    if min_degree > 0 or max_degree < coeffs.lmax:
+        coeffs = taper_coeffs(coeffs, min_degree, max_degree)
+
     v_xx, v_xz = compute_gravity_gradient_tensor(coeffs, heatmap=True)
 
     # Set up the grid
@@ -70,9 +128,9 @@ def plot_earthquake_anomaly(
     lon_min = epicenter_lon - region_size
     lon_max = epicenter_lon + region_size
 
-    # Convert longitude to 0-360 range if needed
-    lon_min = lon_min % 360
-    lon_max = lon_max % 360
+    # Normalize longitude boundaries
+    lon_min = normalize_longitude(lon_min)
+    lon_max = normalize_longitude(lon_max)
 
     # Find indices for the region of interest
     lat_indices = np.where((lats >= lat_min) & (lats <= lat_max))[0]
@@ -192,8 +250,7 @@ def plot_earthquake_anomaly(
     if output_file:
         plt.savefig(output_file, dpi=300, bbox_inches="tight")
         print(f"Plot saved as {output_file}")
-    else:
-        plt.show()
+        plt.close()
 
     return fig
 
@@ -213,9 +270,12 @@ def generate_time_series_plots(
     iqr_k: float = 2.5,
     baseline_start: Optional[datetime] = None,
     baseline_end: Optional[datetime] = None,
-) -> None:
+) -> plt.Figure:
     """
     Generate time series plots of gravity gradient anomalies around an earthquake.
+
+    This function creates time series visualizations showing how gravity gradients
+    change over time relative to an earthquake event, with anomaly detection.
 
     Args:
         data_dir: Directory containing GFC files
@@ -230,8 +290,21 @@ def generate_time_series_plots(
         region_radius: Radius around epicenter in degrees
         output_file: Path to save figure
         iqr_k: Multiplier for IQR-based anomaly detection
-        baseline_start: Start date for baseline period (defaults to 3 years before earthquake)
-        baseline_end: End date for baseline period (defaults to 1 year before earthquake)
+        baseline_start: Start date for baseline period (defaults to 1 year before earthquake)
+        baseline_end: End date for baseline period (defaults to 1 month before earthquake)
+
+    Returns:
+        Matplotlib figure object
+
+    Examples:
+        >>> # Generate time series for the 2010 Chile earthquake
+        >>> fig = generate_time_series_plots(
+        ...     "data/",
+        ...     "2010-02-27",
+        ...     -35.846, -72.719,
+        ...     days_before=365, days_after=180,
+        ...     output_file="chile_time_series.png"
+        ... )
     """
     # Convert string date to datetime if needed
     if isinstance(earthquake_date, str):
@@ -243,19 +316,19 @@ def generate_time_series_plots(
 
     # Set default baseline period if not provided
     if baseline_start is None:
-        baseline_start = earthquake_date - timedelta(days=365)  # ~1 years before
+        baseline_start = earthquake_date - timedelta(days=365)  # 1 year before
     if baseline_end is None:
-        baseline_end = earthquake_date - timedelta(days=365)  # 1 year before
+        baseline_end = earthquake_date - timedelta(days=30)  # 1 month before
 
     try:
         grace_files = find_grace_files_for_period(data_dir, start_date, end_date)
     except FileNotFoundError as e:
         print(f"Error: {e}")
-        return
+        return None
 
     if not grace_files:
         print(f"No GRACE files found for {start_date} to {end_date}")
-        return
+        return None
 
     dates, v_xx_values, v_xz_values = [], [], []
 
@@ -273,7 +346,7 @@ def generate_time_series_plots(
         print(f"Long-term average gradients computed successfully: V_xx={v_xx_avg:.2f}, V_xz={v_xz_avg:.2f}")
     except ValueError as e:
         print(f"Baseline error: {e}")
-        return
+        return None
 
     # Process each file
     for gfc_file in grace_files:
@@ -298,7 +371,7 @@ def generate_time_series_plots(
 
     if not dates:
         print("No valid data extracted")
-        return
+        return None
 
     days_relative = [(d - earthquake_date).days for d in dates]
 
@@ -307,15 +380,11 @@ def generate_time_series_plots(
 
     # Process and plot V_xx
     v_xx_array = np.array(v_xx_values)
-    q1_xx, q3_xx = np.percentile(v_xx_array, [25, 75])
-    iqr_xx = q3_xx - q1_xx
-    lower_bound_xx = q1_xx - iqr_k * iqr_xx
-    upper_bound_xx = q3_xx + iqr_k * iqr_xx
-    anomaly_indices_xx = np.where((v_xx_array < lower_bound_xx) | (v_xx_array > upper_bound_xx))[0]
+    anomaly_indices_xx, stats_xx = detect_anomalies(v_xx_array, iqr_k)
 
     ax1.plot(days_relative, v_xx_values, "b-", label="Mean V_xx")
     ax1.axvline(x=0, color="r", linestyle="-", label="Earthquake")
-    if anomaly_indices_xx.size > 0:
+    if len(anomaly_indices_xx) > 0:
         ax1.scatter(
             np.array(days_relative)[anomaly_indices_xx],
             v_xx_array[anomaly_indices_xx],
@@ -325,24 +394,20 @@ def generate_time_series_plots(
             s=100,
             edgecolors="black",
         )
-    ax1.axhline(y=lower_bound_xx, color="gray", linestyle="--", label="Lower IQR")
-    ax1.axhline(y=upper_bound_xx, color="gray", linestyle="--", label="Upper IQR")
+    ax1.axhline(y=stats_xx["lower_bound"], color="gray", linestyle="--", label="Lower IQR")
+    ax1.axhline(y=stats_xx["upper_bound"], color="gray", linestyle="--", label="Upper IQR")
     ax1.set_ylabel("V_xx (Eötvös)")
     ax1.set_title(f"V_xx Time Series (±{region_radius}° around epicenter)")
     ax1.legend()
     ax1.grid(True)
 
-    # Process and plot
+    # Process and plot V_xz
     v_xz_array = np.array(v_xz_values)
-    q1_xz, q3_xz = np.percentile(v_xz_array, [25, 75])
-    iqr_xz = q3_xz - q1_xz
-    lower_bound_xz = q1_xz - iqr_k * iqr_xz
-    upper_bound_xz = q3_xz + iqr_k * iqr_xz
-    anomaly_indices_xz = np.where((v_xz_array < lower_bound_xz) | (v_xz_array > upper_bound_xz))[0]
+    anomaly_indices_xz, stats_xz = detect_anomalies(v_xz_array, iqr_k)
 
     ax2.plot(days_relative, v_xz_values, "g-", label="Mean V_xz")
     ax2.axvline(x=0, color="r", linestyle="-", label="Earthquake")
-    if anomaly_indices_xz.size > 0:
+    if len(anomaly_indices_xz) > 0:
         ax2.scatter(
             np.array(days_relative)[anomaly_indices_xz],
             v_xz_array[anomaly_indices_xz],
@@ -352,79 +417,19 @@ def generate_time_series_plots(
             s=100,
             edgecolors="black",
         )
-    ax2.axhline(y=lower_bound_xz, color="gray", linestyle="--", label="Lower IQR")
-    ax2.axhline(y=upper_bound_xz, color="gray", linestyle="--", label="Upper IQR")
+    ax2.axhline(y=stats_xz["lower_bound"], color="gray", linestyle="--", label="Lower IQR")
+    ax2.axhline(y=stats_xz["upper_bound"], color="gray", linestyle="--", label="Upper IQR")
     ax2.set_xlabel("Days Relative to Earthquake")
     ax2.set_ylabel("V_xz (Eötvös)")
-    ax2.set_title("V_xz Time Series (±{}° around epicenter)".format(region_radius))
+    ax2.set_title(f"V_xz Time Series (±{region_radius}° around epicenter)")
     ax2.legend()
     ax2.grid(True)
 
     # Adjust layout and save
     plt.tight_layout()
-    plt.savefig(output_file, dpi=300, bbox_inches="tight")
-    plt.close()
+    if output_file:
+        plt.savefig(output_file, dpi=300, bbox_inches="tight")
+        print(f"Combined time series plot saved as {output_file}")
+        plt.close()
 
-    print(f"Combined time series plot saved as {output_file}")
-
-
-if __name__ == "__main__":
-    # Configure for the 2010 Chilean earthquake
-    DATA_DIR = "/home/kilups/Downloads/ITSG_ITSG-Grace2018_monthly_120"
-    EARTHQUAKE_DATE = "2010-02-27"  # Chilean earthquake
-    EPICENTER_LAT = -35.91  # Latitude of the Chilean earthquake epicenter
-    EPICENTER_LON = -72.73  # Longitude of the Chilean earthquake epicenter
-    OUTPUT_DIR = "earthquake_analysis_chile"
-
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-    # Find a GFC file close to the earthquake date (adjust days_after if needed)
-    try:
-        earthquake_datetime = datetime.strptime(EARTHQUAKE_DATE, "%Y-%m-%d")
-        earthquake_files = find_grace_files_for_period(
-            DATA_DIR, earthquake_datetime, earthquake_datetime + timedelta(days=15)
-        )
-
-        if earthquake_files:
-            selected_file = earthquake_files[0]  # Use the first file found
-
-            # Plot the gravity gradients for this file
-            plot_earthquake_anomaly(
-                selected_file,
-                EPICENTER_LAT,
-                EPICENTER_LON,
-                min_degree=15,
-                max_degree=40,
-                region_size=50,  # Adjust region size for better focus on earthquake area
-                title=f"Chilean Earthquake ({EARTHQUAKE_DATE}) Gravity Gradients",
-                output_file=os.path.join(OUTPUT_DIR, "chile_earthquake_gravity.png"),
-            )
-
-            print(f"Gravity gradient map created using file: {selected_file}")
-        else:
-            print("No GFC file found within 15 days after the earthquake")
-
-    except Exception as e:
-        print(f"Error processing earthquake gravity map: {e}")
-
-    # Generate time series plots
-    try:
-        generate_time_series_plots(
-            DATA_DIR,
-            EARTHQUAKE_DATE,
-            EPICENTER_LAT,
-            EPICENTER_LON,
-            min_degree=10,
-            max_degree=40,
-            taper_width=3,
-            days_before=600,  # Analyze data from 4 months before earthquake
-            days_after=300,  # to 6 months after earthquake
-            region_radius=2,  # Adjust radius based on earthquake magnitude
-            output_file=os.path.join(OUTPUT_DIR, "chile_time_series.png"),
-            iqr_k=2.0,  # Adjust sensitivity for anomaly detection
-        )
-
-        print("Time series analysis completed")
-
-    except Exception as e:
-        print(f"Error generating time series: {e}")
+    return fig
