@@ -94,17 +94,13 @@ def plot_localized_anomaly(
     fig = plt.figure(figsize=(12, 10))
     ax = plt.axes(projection=ccrs.PlateCarree())
 
-    # Set extent
     ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
-
-    # Add features
     ax.add_feature(cfeature.COASTLINE)
     ax.add_feature(cfeature.BORDERS, linestyle=":")
     ax.add_feature(cfeature.LAND, alpha=0.1)
     ax.add_feature(cfeature.OCEAN, alpha=0.1)
     ax.gridlines(draw_labels=True)
 
-    # Plot contour
     levels = np.linspace(np.nanmin(zi), np.nanmax(zi), 50)
     contour = ax.contourf(
         xi,
@@ -116,7 +112,6 @@ def plot_localized_anomaly(
         extend="both",
     )
 
-    # Add epicenter marker
     ax.plot(
         epicenter_lon,
         epicenter_lat,
@@ -126,20 +121,16 @@ def plot_localized_anomaly(
         label="Epicenter",
     )
 
-    # Add colorbar
     cbar = plt.colorbar(contour, ax=ax, orientation="vertical", pad=0.05)
     cbar.set_label("Gravity Anomaly Difference (microGal)")
 
-    # Add title
     if title:
         plt.title(title)
     else:
         plt.title(f"Localized Gravitational Anomaly (±{region_size}° around epicenter)")
 
-    # Add legend
     ax.legend(loc="upper right")
 
-    # Save figure if output_file is provided
     if output_file:
         plt.savefig(output_file, dpi=300, bbox_inches="tight")
         print(f"Figure saved as {output_file}")

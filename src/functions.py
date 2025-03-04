@@ -43,7 +43,6 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     lat1_rad, lon1_rad = radians(lat1), radians(lon1)
     lat2_rad, lon2_rad = radians(lat2), radians(lon2)
 
-    # Differences
     dlat = lat2_rad - lat1_rad
     dlon = lon2_rad - lon1_rad
 
@@ -162,7 +161,6 @@ def compute_anomaly_difference(coeffs1: pysh.SHGravCoeffs, coeffs2: pysh.SHGravC
         >>> diff = compute_anomaly_difference(coeffs1, coeffs2)
         >>> np.mean(diff)  # Average difference in microGal
     """
-    exclude_degrees = coeffs1.lmax if exclude_degrees > coeffs1.lmax else exclude_degrees
     anomaly1 = compute_gravity_anomaly(coeffs1, exclude_degrees)
     anomaly2 = compute_gravity_anomaly(coeffs2, exclude_degrees)
 

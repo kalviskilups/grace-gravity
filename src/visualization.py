@@ -190,7 +190,6 @@ def plot_earthquake_anomaly(
         extend="both",
     )
 
-    # Add epicenter marker
     ax1.plot(
         epicenter_lon,
         epicenter_lat,
@@ -200,17 +199,14 @@ def plot_earthquake_anomaly(
         label="Epicenter",
     )
 
-    # Add colorbar
     cbar1 = plt.colorbar(pcm1, ax=ax1, orientation="vertical")
     cbar1.set_label("V_xx Gravity Gradient (Eötvös)")
     ax1.set_title("V_xx Gravity Gradient")
 
-    # Second subplot: V_xz gradient
     ax2.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
     ax2.add_feature(cfeature.COASTLINE)
     ax2.add_feature(cfeature.BORDERS, linestyle=":")
 
-    # Plot V_xz
     pcm2 = ax2.contourf(
         xi,
         yi,
@@ -221,7 +217,6 @@ def plot_earthquake_anomaly(
         extend="both",
     )
 
-    # Add epicenter marker
     ax2.plot(
         epicenter_lon,
         epicenter_lat,
@@ -231,12 +226,10 @@ def plot_earthquake_anomaly(
         label="Epicenter",
     )
 
-    # Add colorbar
     cbar2 = plt.colorbar(pcm2, ax=ax2, orientation="vertical")
     cbar2.set_label("V_xz Gravity Gradient (Eötvös)")
     ax2.set_title("V_xz Gravity Gradient")
 
-    # Main title
     if title:
         plt.suptitle(title, fontsize=16)
     else:
@@ -246,7 +239,6 @@ def plot_earthquake_anomaly(
 
     plt.tight_layout()
 
-    # Save or display
     if output_file:
         plt.savefig(output_file, dpi=300, bbox_inches="tight")
         print(f"Plot saved as {output_file}")
@@ -375,7 +367,6 @@ def generate_time_series_plots(
 
     days_relative = [(d - earthquake_date).days for d in dates]
 
-    # Create a single figure with two subplots
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 12), sharex=True)
 
     # Process and plot V_xx

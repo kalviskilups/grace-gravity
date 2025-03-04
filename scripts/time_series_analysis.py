@@ -92,7 +92,6 @@ def main():
     # 1. Plot gravity gradient map around earthquake date
     print(f"Generating gravity gradient map for {args.eq_date}...")
     try:
-        # Find a GFC file close to the earthquake date
         earthquake_files = find_grace_files_for_period(args.data_dir, args.eq_date, args.eq_date + timedelta(days=15))
 
         if earthquake_files:

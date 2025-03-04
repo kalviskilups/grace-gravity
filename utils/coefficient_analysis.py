@@ -42,12 +42,10 @@ def main():
 
     args = parser.parse_args()
 
-    # Check if file exists
     if not os.path.exists(args.gfc_file):
         print(f"Error: GFC file not found: {args.gfc_file}")
         return
 
-    # Generate default output filename if not provided
     if args.output is None:
         file_date = parse_date_from_filename(args.gfc_file)
         date_str = file_date.strftime("%Y%m%d") if file_date else "unknown_date"
@@ -55,7 +53,6 @@ def main():
         base_name = os.path.basename(args.gfc_file).split(".")[0]
         args.output = os.path.join(base_dir, f"{base_name}_spectrum_{date_str}.png")
 
-    # Plot coefficient spectrum
     print(f"Analyzing coefficient spectrum of {args.gfc_file}...")
     print(f"  - Unit: {args.unit}")
     print(f"  - X-axis scale: {args.xscale}")

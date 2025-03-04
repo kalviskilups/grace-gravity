@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Utility script for cleaning GRACE GFC files.
+Utility script for cleaning weekly GRACE GFC files.
 
 This script removes unnecessary reference blocks from GFC files to create
 clean versions more suitable for processing.
@@ -31,9 +31,7 @@ def clean_gfc_file(filepath: str) -> Tuple[int, str]:
 
     # Define the pattern to match and remove reference blocks
     pattern = re.compile(
-        r"^\s*Reference:\s*\r?\n"  # Match 'Reference:' with optional whitespace and newline
-        r"(?:.*\r?\n)+?"  # Match one or more lines, non-greedily
-        r"(?=^\s*(?:time_period_of_data|begin_of_head))",  # Lookahead for the next header
+        r"^\s*Reference:\s*\r?\n" r"(?:.*\r?\n)+?" r"(?=^\s*(?:time_period_of_data|begin_of_head))",
         re.MULTILINE,
     )
 
@@ -108,12 +106,10 @@ def main():
     try:
         results = clean_directory(args.directory, args.pattern)
 
-        # Print summary
         total_files = len(results)
         total_subs = sum(r[1] for r in results)
         print(f"Processed {total_files} files with {total_subs} total substitutions.")
 
-        # Print details if verbose
         if args.verbose:
             print("\nDetailed results:")
             for filename, num_subs, encoding in results:

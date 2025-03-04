@@ -51,17 +51,6 @@ The detection process involves:
 
 ## Installation
 
-### Requirements
-
-- Python 3.8 or higher
-- NumPy
-- SciPy
-- Matplotlib
-- Cartopy
-- PyShTools
-
-### Installation Steps
-
 1. Clone the repository:
    ```bash
    git clone https://github.com/yourusername/grace-gravity.git
@@ -92,7 +81,7 @@ This package works with GRACE data in the form of spherical harmonic coefficient
 
 1. **ITSG-Grace2018**: 
    - High-resolution gravity field model from TU Graz
-   - Offers daily, weekly, and monthly solutions
+   - Offers daily and monthly solutions
    - Website: [https://www.tugraz.at/institute/ifg/downloads/gravity-field-models/itsg-grace2018](https://www.tugraz.at/institute/ifg/downloads/gravity-field-models/itsg-grace2018)
 
 2. **ICGEM Data Portal**: 
